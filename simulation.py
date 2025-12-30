@@ -36,12 +36,12 @@ def speed_calculation():
  
 
     # get drive cycle once (UDDS / HWFET / US06)
-    cycle_time, cycle_speed = load_drive_cycle("UDDS")
+    cycle_time, cycle_speed = load_drive_cycle("HWFET")
     time_end = cycle_time[-1]    # simulate full cycle
 
     while time_start < time_end:
         # interpolated reference speed from drive cycle
-        v_ref = get_vref_interpolated(time_start, cycle_speed)
+        v_ref = get_vref_interpolated(time_start, cycle_time, cycle_speed)
 
         # driver PI controller
         throttle, brake = driver_command(veh_speed, v_ref)
@@ -88,6 +88,33 @@ def speed_calculation():
 
 if __name__ == "__main__":
     time_list, speed_list, vref_list, throttle_list, brake_list,motor_speed_list, motor_torque_list,SOC_list,Terminal_Voltage_list,motor_power_list,battery_power_list = speed_calculation()
+
+     # =====================================================
+    # ENERGY & DISTANCE CALCULATION  (PUT IT HERE)
+    # =====================================================
+
+    energy_Wh = 0.0
+    for P in battery_power_list:
+        energy_Wh += P * sim_time / 3600.0  # W·s -> Wh
+
+    energy_kWh = energy_Wh / 1000.0
+
+    distance_m = 0.0
+    for v in speed_list:
+        distance_m += v * sim_time  # m/s * s -> m
+
+    distance_miles = distance_m / 1609.34
+
+    if distance_miles > 0:
+        kWh_per_100_miles = (energy_kWh / distance_miles) * 100.0
+    else:
+        kWh_per_100_miles = 0.0
+
+    print("\n========== Energy Summary ==========")
+    print(f"Total Energy Used      : {energy_kWh:.2f} kWh")
+    print(f"Total Distance         : {distance_miles:.2f} miles")
+    print(f"Energy Consumption     : {kWh_per_100_miles:.2f} kWh / 100 miles")
+
 
     # ===== plots =====
     plt.figure()
@@ -150,3 +177,5 @@ if __name__ == "__main__":
     plt.legend()
 
     plt.show()
+
+    

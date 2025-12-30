@@ -1,95 +1,69 @@
 # drive_cycle.py
+import os
+import openpyxl
 
 MPH_TO_MPS = 0.44704
 
-
-# ===============================
-#  DRIVE CYCLE DATABASE
-# ===============================
-# All cycles stored here in mph
-# (shortened representative versions)
-# ===============================
-
-DRIVE_CYCLES_MPH = {
-    "UDDS": [
-        0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
-        6, 10, 15, 20, 23, 25, 26, 27, 28, 28,
-        29, 30, 30, 31, 31, 31, 31, 30, 29, 29,
-        28, 28, 29, 30, 30, 31, 32, 33, 34, 35,
-        35, 35, 35, 34, 33, 32, 30, 28, 26, 25,
-        0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
-        15, 20, 25, 30, 35, 36, 36, 37, 38, 38,
-        39, 40, 40, 41, 41, 41, 40, 40, 39, 38,
-        37, 36, 34, 32, 30, 28, 26, 24, 22, 20,
-        18, 16, 14, 12, 10, 8, 6, 4, 2, 0,
-    ],
-
-    "HWFET": (
-        [0] * 20 +
-        [0 + (60.0 - 0.0) * (i / 60.0) for i in range(60)] +
-        sum([[55, 56, 57, 58, 59, 60, 59, 58, 57, 56]] * 12, []) +
-        [60.0 - (60.0 - 45.0) * (i / 30.0) for i in range(30)] +
-        [45.0] * 30 +
-        [45.0 * (1.0 - i / 40.0) for i in range(40)]
-    ),
-
-    "US06": (
-        [0] * 10 +
-        [0 + (50.0 - 0.0) * (i / 20.0) for i in range(20)] +
-        [50.0] * 20 +
-        [50.0 + (70.0 - 50.0) * (i / 20.0) for i in range(20)] +
-        [70.0] * 20 +
-        [70.0 - (70.0 - 20.0) * (i / 20.0) for i in range(20)] +
-        [20.0] * 20 +
-        [20.0 + (80.0 - 20.0) * (i / 20.0) for i in range(20)] +
-        [80.0] * 20 +
-        sum([[60, 70, 80, 70, 60, 70, 80, 70]] * 3, []) +
-        [60.0 * (1.0 - i / 20.0) for i in range(20)]
-    )
+# Cycle name -> Excel file (kept next to this .py file)
+DRIVE_CYCLE_FILES = {
+    "ECE_15": "ECE_15_Cycle.xlsx",
+    "EUDC":   "EUDC_Cycle.xlsx",
+    "HWFET":  "HWFET_Cycle.xlsx",
+    "UDDS": "UDDS_Cycle.xlsx",
+    "US06": "US06_Cycle.xlsx"
 }
 
-
-# ===============================
-#  GENERAL LOAD FUNCTION
-# ===============================
-
-def load_drive_cycle(cycle_name):
+def load_drive_cycle(cycle_name_or_path):
     """
-    Loads any drive cycle by name.
     Returns:
-       time  -> list of time stamps [s]
-       speed -> list of speeds [m/s]
+        time_list  : [s]
+        speed_list : [m/s]  (Excel is mph, converted here)
     """
-    cycle_name = cycle_name.upper()
+    # If user passes a cycle name, map to file next to this script
+    key = str(cycle_name_or_path).strip().upper()
+    if key in DRIVE_CYCLE_FILES:
+        file_path = os.path.join(os.path.dirname(__file__), DRIVE_CYCLE_FILES[key])
+    else:
+        # otherwise treat it as a direct path
+        file_path = str(cycle_name_or_path)
 
-    if cycle_name not in DRIVE_CYCLES_MPH:
-        raise ValueError(f"Unknown drive cycle '{cycle_name}'. Available: {list(DRIVE_CYCLES_MPH.keys())}")
+    wb = openpyxl.load_workbook(file_path, data_only=True)
+    ws = wb[wb.sheetnames[0]]   # first sheet
 
-    mph_list = DRIVE_CYCLES_MPH[cycle_name]
+    time_list = []
+    speed_list = []
 
-    # convert to m/s
-    speed_mps = [v * MPH_TO_MPS for v in mph_list]
+    for row in ws.iter_rows(values_only=True):
+        t = row[0]
+        v = row[1]
 
-    # time vector in 1 sec increments
-    time = list(range(len(speed_mps)))
+        # skip headers / blanks
+        if isinstance(t, (int, float)) and isinstance(v, (int, float)):
+            time_list.append(float(t))
+            speed_list.append(float(v) * MPH_TO_MPS)  # mph -> m/s
 
-    return time, speed_mps
+    if len(time_list) < 2:
+        raise ValueError("Excel must contain at least 2 numeric rows: Time(s), Speed(mph).")
+
+    return time_list, speed_list
 
 
-# ===============================
-#  INTERPOLATION (COMMON)
-# ===============================
-def get_vref_interpolated(t, speed_list):
+def get_vref_interpolated(t, time_list, speed_list):
     """
-    Linear interpolation of a discrete speed profile.
+    Linear interpolation: finds speed at time t.
     """
-    t_int = int(t)
-    t_frac = t - t_int
-
-    if t_int >= len(speed_list) - 1:
+    if t <= time_list[0]:
+        return speed_list[0]
+    if t >= time_list[-1]:
         return speed_list[-1]
 
-    v1 = speed_list[t_int]
-    v2 = speed_list[t_int + 1]
+    # find interval (simple linear scan; fine for most cycles)
+    i = 0
+    while i < len(time_list) - 1 and time_list[i + 1] < t:
+        i += 1
 
-    return v1 + t_frac * (v2 - v1)
+    t1, t2 = time_list[i], time_list[i + 1]
+    v1, v2 = speed_list[i], speed_list[i + 1]
+
+    alpha = (t - t1) / (t2 - t1)
+    return v1 + alpha * (v2 - v1)
